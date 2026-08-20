@@ -12,50 +12,50 @@ export default function AdminUsersPage() {
   const [error, setError] = useState(null)
 
   useEffect(() => {
+    async function checkAccessAndFetchUsers() {
+      setLoading(true)
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        router.push('/login')
+        return
+      }
+
+      // check if current user is super_admin
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single()
+
+      if (profileError || profile.role !== 'super_admin') {
+        setLoading(false)
+        router.push('/')
+        return
+      }
+
+      // Fetch all users with todo counts in a single query (fixes N+1 problem)
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, email, role, todos(count)')
+
+      if (profilesError) {
+        console.error(profilesError)
+        setError(profilesError)
+        setLoading(false)
+        return
+      }
+
+      const results = profiles.map((p) => ({
+        ...p,
+        todo_count: p.todos?.[0]?.count || 0,
+      }))
+
+      setUsers(results)
+      setLoading(false)
+    }
+
     checkAccessAndFetchUsers()
-  }, [])
-
-  async function checkAccessAndFetchUsers() {
-    setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      router.push('/login')
-      return
-    }
-
-    // check if current user is super_admin
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single()
-
-    if (profileError || profile.role !== 'super_admin') {
-      setLoading(false)
-      router.push('/')
-      return
-    }
-
-    // Fetch all users with todo counts in a single query (fixes N+1 problem)
-    const { data: profiles, error: profilesError } = await supabase
-      .from('profiles')
-      .select('id, email, role, todos(count)')
-
-    if (profilesError) {
-      console.error(profilesError)
-      setError(profilesError)
-      setLoading(false)
-      return
-    }
-
-    const results = profiles.map((p) => ({
-      ...p,
-      todo_count: p.todos?.[0]?.count || 0,
-    }))
-
-    setUsers(results)
-    setLoading(false)
-  }
+  }, [router])
 
   if (loading) return <Loading />
   if (error) return <ErrorMessage message={error.message} />

@@ -11,18 +11,12 @@ export default function TodosPage() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
 
-  useEffect(() => {
-    fetchTodos()
-  }, [])
-
-  async function fetchTodos() {
-    setLoading(true)
-    setError(null)
+  // Pure data loader — does not touch state, so it's safe to call from an
+  // effect (after an await) as well as from event handlers.
+  async function loadTodos() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
-      setError({ message: 'Please log in to view your to-do list.' })
-      setLoading(false)
-      return
+      throw { message: 'Please log in to view your to-do list.' }
     }
 
     const { data, error } = await supabase
@@ -31,11 +25,39 @@ export default function TodosPage() {
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
 
-    if (error) setError(error)
-    else setTodos(data)
-
-    setLoading(false)
+    if (error) throw error
+    return data
   }
+
+  async function fetchTodos() {
+    setLoading(true)
+    setError(null)
+    try {
+      const data = await loadTodos()
+      setTodos(data)
+    } catch (err) {
+      setError(err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    async function initialLoad() {
+      setLoading(true)
+      setError(null)
+      try {
+        const data = await loadTodos()
+        setTodos(data)
+      } catch (err) {
+        setError(err)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    initialLoad()
+  }, [])
 
   async function handleAddTodo(e) {
     e.preventDefault()
