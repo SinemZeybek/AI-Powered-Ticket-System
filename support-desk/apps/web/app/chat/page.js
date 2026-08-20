@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { supabase } from '@/lib/supabaseClient';
 
 export default function ChatPage() {
   const [messages, setMessages] = useState([]); // { role: 'user' | 'assistant', content: string }
@@ -29,10 +30,13 @@ export default function ChatPage() {
     setError(null);
 
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }),
         },
         body: JSON.stringify({ message: trimmed }),
       });

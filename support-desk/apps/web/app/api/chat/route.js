@@ -28,8 +28,18 @@ export async function POST(request) {
       );
     }
 
-    // Authenticate user so chat history is per-user
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    // Authenticate user so chat history is per-user. The browser client
+    // keeps its session in localStorage (not cookies), so this route can't
+    // see it via supabase.auth.getUser() alone — the client must send the
+    // access token explicitly, verified here.
+    const authHeader = request.headers.get('authorization') || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+    if (!token) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

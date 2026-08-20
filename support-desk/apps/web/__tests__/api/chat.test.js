@@ -74,10 +74,12 @@ jest.mock("@/lib/agentTools", () => ({
 const { POST } = require("@/app/api/chat/route");
 
 // Request mock with headers (handler uses request.headers.get)
-function mockRequest(body) {
+function mockRequest(body, { authorized = true } = {}) {
+  const headers = new Map([["x-request-id", "test-req-1"]]);
+  if (authorized) headers.set("authorization", "Bearer test-access-token");
   return {
     json: async () => body,
-    headers: new Map([["x-request-id", "test-req-1"]]),
+    headers,
   };
 }
 
@@ -132,6 +134,13 @@ describe("POST /api/chat", () => {
     });
 
     const req = mockRequest({ message: "Hello" });
+    const res = await POST(req);
+
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 401 when no Authorization header is sent", async () => {
+    const req = mockRequest({ message: "Hello" }, { authorized: false });
     const res = await POST(req);
 
     expect(res.status).toBe(401);
