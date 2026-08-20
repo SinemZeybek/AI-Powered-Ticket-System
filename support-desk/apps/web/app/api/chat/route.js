@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { getRedisClient } from '@/lib/redisClient';
-import { supabase } from '@/lib/supabaseClient';
 import { agentToolDefinitions, executeAgentTool } from '@/lib/agentTools';
 
 const openai = new OpenAI({
@@ -11,15 +10,30 @@ const openai = new OpenAI({
 const CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 const CHAT_HISTORY_LIMIT = Number(process.env.CHAT_HISTORY_LIMIT) || 50;
 const MAX_TOOL_ITERATIONS = 4;
+const RATE_LIMIT_MAX = 15;
+const RATE_LIMIT_WINDOW_SECONDS = 600;
 
-function getChatHistoryKey(userId) {
-  return `chat:messages:${userId}`;
+function getChatHistoryKey(sessionId) {
+  return `chat:messages:${sessionId}`;
+}
+
+function getRateLimitKey(sessionId) {
+  return `ratelimit:chat:${sessionId}`;
 }
 
 export async function POST(request) {
   try {
     const body = await request.json();
     const userMessage = body?.message;
+
+    // Public widget — visitors have no account. The chat page generates a
+    // random id per browser (kept in localStorage) so history/rate-limits
+    // are per-visitor without requiring a login.
+    const sessionId = request.headers.get('x-session-id');
+
+    if (!sessionId) {
+      return NextResponse.json({ error: 'Missing session id' }, { status: 400 });
+    }
 
     if (!userMessage || typeof userMessage !== 'string') {
       return NextResponse.json(
@@ -28,24 +42,25 @@ export async function POST(request) {
       );
     }
 
-    // Authenticate user so chat history is per-user. The browser client
-    // keeps its session in localStorage (not cookies), so this route can't
-    // see it via supabase.auth.getUser() alone — the client must send the
-    // access token explicitly, verified here.
-    const authHeader = request.headers.get('authorization') || '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const chatHistoryKey = getChatHistoryKey(user.id);
+    const chatHistoryKey = getChatHistoryKey(sessionId);
     const redis = await getRedisClient();
+
+    // Cheap protection on a now-public endpoint sitting in front of a paid API key.
+    try {
+      const rateLimitKey = getRateLimitKey(sessionId);
+      const count = await redis.incr(rateLimitKey);
+      if (count === 1) {
+        await redis.expire(rateLimitKey, RATE_LIMIT_WINDOW_SECONDS);
+      }
+      if (count > RATE_LIMIT_MAX) {
+        return NextResponse.json(
+          { error: 'Too many messages — please wait a few minutes and try again.' },
+          { status: 429 }
+        );
+      }
+    } catch (err) {
+      console.error('Rate limit check failed:', err);
+    }
 
     let history = [];
     try {
@@ -66,10 +81,12 @@ export async function POST(request) {
       {
         role: 'system',
         content:
-          'You are an AI assistant inside a Next.js + Supabase todo/support application. Be concise and helpful. ' +
-          'Use the search_knowledge_base tool to answer questions about how the app works instead of guessing. ' +
-          'Use submit_support_ticket when the user describes a problem or bug. ' +
-          'Use check_ticket_status when the user asks about a ticket they already submitted and gives you a job ID.',
+          'You are the AI assistant for Zeybek Hukuk Bürosu, a law firm in İzmit, Turkey. Be concise and helpful. ' +
+          'Respond in the same language the visitor writes in (the firm operates primarily in Turkish, English also available). ' +
+          'Always use search_knowledge_base before answering a factual question about the firm — never guess at facts like contact info, hours, or practice areas. ' +
+          "If the knowledge base doesn't confidently answer the visitor's question (e.g. case-specific legal advice, pricing for their situation), " +
+          'use submit_support_ticket to hand off to a human, and tell the visitor someone will follow up. ' +
+          'Use check_ticket_status if the visitor asks about a ticket they already submitted and gives you a ticket ID.',
       },
       ...historyMessages,
       {
@@ -108,7 +125,7 @@ export async function POST(request) {
             args = {};
           }
 
-          const result = await executeAgentTool(toolCall.function.name, args, { userId: user.id });
+          const result = await executeAgentTool(toolCall.function.name, args, { sessionId });
 
           messages.push({
             role: 'tool',

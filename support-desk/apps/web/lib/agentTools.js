@@ -1,25 +1,33 @@
-import { chatQueue } from './bullmq';
+import { supabaseAdmin } from './supabaseAdminClient';
 
+// Real facts about Zeybek Hukuk Bürosu, pulled from zeybekhukuk.com. The
+// site is primarily Turkish but also available in English, so practice
+// areas are kept in Turkish (as they really appear) with an English gloss —
+// the model responds in whichever language the visitor writes in.
 export const KNOWLEDGE_BASE = [
   {
-    topic: 'auth',
-    text: 'Users sign up, log in, and log out via Supabase Auth. Sessions are protected by middleware, and there is a forgot-password / update-password flow.',
+    topic: 'contact',
+    text: 'Contact: phone 0262 322 21 66, email av.kerem@zeybekhukuk.com. Address: Yenişehir Mah. Demokrasi Cad. No:27 Balcıoğlu İş Merkezi K:2 D:7, İzmit/Kocaeli.',
   },
   {
-    topic: 'roles',
-    text: 'There are two roles: "user" (standard permissions, can only see their own data) and "super_admin" (can see all users and their todo counts in an admin panel).',
+    topic: 'hours',
+    text: 'Office hours: Monday-Friday (Pazartesi-Cuma), 09:00-18:00.',
   },
   {
-    topic: 'todos',
-    text: 'Regular users can create, read, update, delete, and toggle completion on their own todos. Users cannot see or edit other users\' todos.',
+    topic: 'practice areas',
+    text: 'Practice areas: İş Hukuku (Labor Law), Gayrimenkul Hukuku (Real Estate Law), Tıp Hukuku (Medical Law), İcra-İflas Hukuku (Enforcement/Bankruptcy Law), Tazminat Hukuku (Compensation Law), Ticaret Hukuku (Commercial Law), Ceza Hukuku (Criminal Law), Aile Hukuku (Family Law).',
   },
   {
-    topic: 'tickets',
-    text: 'Users can submit a support ticket with a subject and message. The ticket is queued for asynchronous AI processing, which drafts a suggested response. You can check a submitted ticket\'s status if you have its job ID.',
+    topic: 'firm history',
+    text: 'Founded in 1979, 47 years of experience, 15 specialists on staff. Currently led by Av. Kerem Zeybek (second generation), combining traditional legal methodology with AI-supported tools and digital process management.',
   },
   {
-    topic: 'chat',
-    text: 'This chat assistant can answer questions about the app, search its own knowledge base, submit a support ticket on the user\'s behalf, and check the status of a previously submitted ticket.',
+    topic: 'consultation',
+    text: 'To book a consultation, contact the firm by phone, email, or the website contact form. There is no public pricing list — cost is discussed during the initial consultation.',
+  },
+  {
+    topic: 'languages',
+    text: 'The firm primarily operates in Turkish; English is also available.',
   },
 ];
 
@@ -33,41 +41,40 @@ export function searchKnowledgeBase(query) {
   };
 }
 
-export async function submitSupportTicket({ subject, message }, userId) {
+export async function submitSupportTicket({ subject, message }, sessionId) {
   if (!subject || !message) {
     return { error: 'Both subject and message are required to submit a ticket.' };
   }
 
-  const job = await chatQueue.add(
-    'process-ai-response',
-    { subject, message, userId, source: 'chat-agent' },
-    {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 1000 },
-      removeOnComplete: false,
-      removeOnFail: false,
-    }
-  );
+  const { data, error } = await supabaseAdmin
+    .from('tickets')
+    .insert([{ subject, message, session_id: sessionId || 'unknown' }])
+    .select('id')
+    .single();
 
-  return { jobId: job.id, status: 'queued' };
+  if (error) {
+    return { error: 'Could not submit the ticket right now. Please try again.' };
+  }
+
+  return { ticketId: data.id, status: 'open' };
 }
 
-export async function checkTicketStatus(jobId) {
-  if (!jobId) {
-    return { error: 'A job ID is required to check ticket status.' };
+export async function checkTicketStatus(ticketId) {
+  if (!ticketId) {
+    return { error: 'A ticket ID is required to check status.' };
   }
 
-  const job = await chatQueue.getJob(jobId);
-  if (!job) {
-    return { error: 'Job not found' };
+  const { data, error } = await supabaseAdmin
+    .from('tickets')
+    .select('id, status, created_at')
+    .eq('id', ticketId)
+    .single();
+
+  if (error || !data) {
+    return { error: 'Ticket not found' };
   }
 
-  const state = await job.getState();
-  return {
-    id: job.id,
-    status: state,
-    data: state === 'completed' ? job.returnvalue : null,
-  };
+  return { id: data.id, status: data.status, createdAt: data.created_at };
 }
 
 export const agentToolDefinitions = [
@@ -76,11 +83,11 @@ export const agentToolDefinitions = [
     function: {
       name: 'search_knowledge_base',
       description:
-        'Search the app knowledge base for information about how the app works (auth, roles, todos, tickets, chat).',
+        "Search Zeybek Hukuk Bürosu's knowledge base for real facts (practice areas, contact info, hours, consultation process, firm history) before answering a visitor's question.",
       parameters: {
         type: 'object',
         properties: {
-          query: { type: 'string', description: 'Keywords to search for, e.g. "roles" or "how do tickets work".' },
+          query: { type: 'string', description: 'Keywords to search for, e.g. "practice areas" or "office hours".' },
         },
         required: ['query'],
       },
@@ -91,12 +98,12 @@ export const agentToolDefinitions = [
     function: {
       name: 'submit_support_ticket',
       description:
-        'File a support ticket on the user\'s behalf so it can be processed asynchronously. Use this when the user describes a problem or bug rather than asking a general question.',
+        "Escalate to a human when the knowledge base doesn't confidently answer the visitor's question — e.g. case-specific legal questions, pricing for their situation, or anything requiring a lawyer's judgment.",
       parameters: {
         type: 'object',
         properties: {
-          subject: { type: 'string', description: 'A short summary of the issue.' },
-          message: { type: 'string', description: 'The full description of the issue.' },
+          subject: { type: 'string', description: "A short summary of the visitor's question." },
+          message: { type: 'string', description: "The visitor's full question, in their own words." },
         },
         required: ['subject', 'message'],
       },
@@ -106,13 +113,13 @@ export const agentToolDefinitions = [
     type: 'function',
     function: {
       name: 'check_ticket_status',
-      description: 'Check the processing status of a previously submitted ticket by its job ID.',
+      description: 'Check whether a previously submitted ticket has been resolved, given its ticket ID.',
       parameters: {
         type: 'object',
         properties: {
-          jobId: { type: 'string', description: 'The job ID returned when the ticket was submitted.' },
+          ticketId: { type: 'string', description: 'The ticket ID returned when the ticket was submitted.' },
         },
-        required: ['jobId'],
+        required: ['ticketId'],
       },
     },
   },
@@ -123,9 +130,9 @@ export async function executeAgentTool(name, args, context) {
     case 'search_knowledge_base':
       return searchKnowledgeBase(args.query);
     case 'submit_support_ticket':
-      return submitSupportTicket({ subject: args.subject, message: args.message }, context?.userId);
+      return submitSupportTicket({ subject: args.subject, message: args.message }, context?.sessionId);
     case 'check_ticket_status':
-      return checkTicketStatus(args.jobId);
+      return checkTicketStatus(args.ticketId);
     default:
       return { error: `Unknown tool: ${name}` };
   }

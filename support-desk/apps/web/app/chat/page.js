@@ -1,7 +1,18 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
+
+const SESSION_STORAGE_KEY = 'zeybek-chat-session-id';
+
+function getOrCreateSessionId() {
+  if (typeof window === 'undefined') return null;
+  let id = window.localStorage.getItem(SESSION_STORAGE_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    window.localStorage.setItem(SESSION_STORAGE_KEY, id);
+  }
+  return id;
+}
 
 export default function ChatPage() {
   const [messages, setMessages] = useState([]); // { role: 'user' | 'assistant', content: string }
@@ -9,6 +20,11 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const bottomRef = useRef(null);
+  const sessionIdRef = useRef(null);
+
+  useEffect(() => {
+    sessionIdRef.current = getOrCreateSessionId();
+  }, []);
 
   // Mesajlar değiştikçe otomatik sona scroll
   useEffect(() => {
@@ -30,13 +46,11 @@ export default function ChatPage() {
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }),
+          'x-session-id': sessionIdRef.current || '',
         },
         body: JSON.stringify({ message: trimmed }),
       });
@@ -66,7 +80,7 @@ export default function ChatPage() {
     <div className="flex flex-col max-w-2xl mx-auto h-[80vh] border rounded-lg shadow-sm bg-white">
       {/* Header */}
       <div className="px-4 py-3 border-b flex items-center justify-between">
-        <h1 className="font-semibold text-lg">AI Chat</h1>
+        <h1 className="font-semibold text-lg">Zeybek Hukuk Bürosu — AI Assistant</h1>
         {loading && (
           <span className="text-sm text-gray-500 animate-pulse">
             AI is typing...
@@ -78,7 +92,7 @@ export default function ChatPage() {
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 bg-gray-50">
         {messages.length === 0 && (
           <p className="text-sm text-gray-500">
-            Start a conversation by sending a message below.
+            Ask a question about Zeybek Hukuk Bürosu — practice areas, hours, or how to book a consultation.
           </p>
         )}
 

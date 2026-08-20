@@ -1,14 +1,15 @@
 /**
- * Chat endpoint unit test (mocked OpenAI + mocked Redis + mocked NextResponse + mocked Supabase)
+ * Chat endpoint unit test (mocked OpenAI + mocked Redis + mocked NextResponse)
  *
  * We mock:
  * - next/server (NextResponse.json)
  * - Redis client (now async)
  * - OpenAI SDK
- * - Supabase client (for auth)
+ * - agentTools (the tool loop is exercised, individual tool bodies are unit-tested separately)
  *
- * This way, the test does not depend on real network, Redis,
- * or the real Next.js server runtime.
+ * This way, the test does not depend on real network, Redis, or the real
+ * Next.js server runtime. The endpoint is a public widget (no auth) — the
+ * visitor is identified by a client-generated session id instead.
  */
 
 // Mock NextResponse from next/server
@@ -30,22 +31,12 @@ const mockRedisClient = {
   lRange: jest.fn().mockResolvedValue([]),
   rPush: jest.fn().mockResolvedValue(true),
   lTrim: jest.fn().mockResolvedValue(true),
+  incr: jest.fn().mockResolvedValue(1),
+  expire: jest.fn().mockResolvedValue(true),
 };
 
 jest.mock("@/lib/redisClient", () => ({
   getRedisClient: jest.fn().mockResolvedValue(mockRedisClient),
-}));
-
-// Mock Supabase client (for user auth in chat route)
-jest.mock("@/lib/supabaseClient", () => ({
-  supabase: {
-    auth: {
-      getUser: jest.fn().mockResolvedValue({
-        data: { user: { id: "test-user-123" } },
-        error: null,
-      }),
-    },
-  },
 }));
 
 // Mock OpenAI SDK
@@ -74,9 +65,9 @@ jest.mock("@/lib/agentTools", () => ({
 const { POST } = require("@/app/api/chat/route");
 
 // Request mock with headers (handler uses request.headers.get)
-function mockRequest(body, { authorized = true } = {}) {
+function mockRequest(body, { sessionId = "session-123" } = {}) {
   const headers = new Map([["x-request-id", "test-req-1"]]);
-  if (authorized) headers.set("authorization", "Bearer test-access-token");
+  if (sessionId) headers.set("x-session-id", sessionId);
   return {
     json: async () => body,
     headers,
@@ -89,6 +80,8 @@ describe("POST /api/chat", () => {
     mockRedisClient.lRange.mockClear();
     mockRedisClient.rPush.mockClear();
     mockRedisClient.lTrim.mockClear();
+    mockRedisClient.incr.mockReset().mockResolvedValue(1);
+    mockRedisClient.expire.mockClear();
     executeAgentToolMock.mockClear();
     createMock.mockClear();
     createMock.mockResolvedValue({
@@ -115,39 +108,35 @@ describe("POST /api/chat", () => {
     expect(json.error).toBe("Message is required");
   });
 
-  it("stores chat messages in Redis with per-user key", async () => {
+  it("returns 400 when no session id is sent", async () => {
+    const req = mockRequest({ message: "Hello" }, { sessionId: null });
+    const res = await POST(req);
+
+    expect(res.status).toBe(400);
+  });
+
+  it("stores chat messages in Redis keyed by session id", async () => {
     const req = mockRequest({ message: "Hello" });
     await POST(req);
 
-    // Verify Redis writes use the user-specific key
     expect(mockRedisClient.rPush).toHaveBeenCalledWith(
-      "chat:messages:test-user-123",
+      "chat:messages:session-123",
       expect.any(String)
     );
   });
 
-  it("returns 401 when user is not authenticated", async () => {
-    const { supabase } = require("@/lib/supabaseClient");
-    supabase.auth.getUser.mockResolvedValueOnce({
-      data: { user: null },
-      error: { message: "Not authenticated" },
-    });
+  it("returns 429 once the per-session rate limit is exceeded", async () => {
+    mockRedisClient.incr.mockResolvedValue(16);
 
     const req = mockRequest({ message: "Hello" });
     const res = await POST(req);
 
-    expect(res.status).toBe(401);
-  });
-
-  it("returns 401 when no Authorization header is sent", async () => {
-    const req = mockRequest({ message: "Hello" }, { authorized: false });
-    const res = await POST(req);
-
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(429);
+    expect(createMock).not.toHaveBeenCalled();
   });
 
   it("executes a tool call and feeds the result back before returning a final reply", async () => {
-    executeAgentToolMock.mockResolvedValueOnce({ results: ["Roles: user and super_admin."] });
+    executeAgentToolMock.mockResolvedValueOnce({ results: ["Hours: Mon-Fri 09:00-18:00."] });
 
     createMock
       .mockResolvedValueOnce({
@@ -159,7 +148,7 @@ describe("POST /api/chat", () => {
               tool_calls: [
                 {
                   id: "call-1",
-                  function: { name: "search_knowledge_base", arguments: JSON.stringify({ query: "roles" }) },
+                  function: { name: "search_knowledge_base", arguments: JSON.stringify({ query: "hours" }) },
                 },
               ],
             },
@@ -167,20 +156,20 @@ describe("POST /api/chat", () => {
         ],
       })
       .mockResolvedValueOnce({
-        choices: [{ message: { content: "There are two roles: user and super_admin." } }],
+        choices: [{ message: { content: "We're open Monday-Friday, 09:00-18:00." } }],
       });
 
-    const req = mockRequest({ message: "What roles exist?" });
+    const req = mockRequest({ message: "What are your hours?" });
     const res = await POST(req);
     const json = await res.json();
 
     expect(executeAgentToolMock).toHaveBeenCalledWith(
       "search_knowledge_base",
-      { query: "roles" },
-      { userId: "test-user-123" }
+      { query: "hours" },
+      { sessionId: "session-123" }
     );
     expect(createMock).toHaveBeenCalledTimes(2);
-    expect(json.reply).toBe("There are two roles: user and super_admin.");
+    expect(json.reply).toBe("We're open Monday-Friday, 09:00-18:00.");
   });
 
   it("falls back to a generic reply if tool calls never resolve within the iteration cap", async () => {

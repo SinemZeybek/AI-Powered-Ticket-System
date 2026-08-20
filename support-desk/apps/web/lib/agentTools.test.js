@@ -1,10 +1,13 @@
-const mockAdd = jest.fn();
-const mockGetJob = jest.fn();
+const mockSingle = jest.fn();
+const mockEq = jest.fn(() => ({ single: mockSingle }));
+const mockSelectAfterInsert = jest.fn(() => ({ single: mockSingle }));
+const mockInsert = jest.fn(() => ({ select: mockSelectAfterInsert }));
+const mockSelect = jest.fn(() => ({ eq: mockEq }));
+const mockFrom = jest.fn(() => ({ insert: mockInsert, select: mockSelect }));
 
-jest.mock('./bullmq', () => ({
-  chatQueue: {
-    add: (...args) => mockAdd(...args),
-    getJob: (...args) => mockGetJob(...args),
+jest.mock('./supabaseAdminClient', () => ({
+  supabaseAdmin: {
+    from: (...args) => mockFrom(...args),
   },
 }));
 
@@ -17,9 +20,9 @@ const {
 
 describe('searchKnowledgeBase', () => {
   it('returns matching entries for a known topic', () => {
-    const { results } = searchKnowledgeBase('roles');
+    const { results } = searchKnowledgeBase('practice areas');
     expect(results.length).toBeGreaterThan(0);
-    expect(results[0].toLowerCase()).toContain('role');
+    expect(results[0].toLowerCase()).toContain('hukuku');
   });
 
   it('returns a fallback message when nothing matches', () => {
@@ -30,71 +33,74 @@ describe('searchKnowledgeBase', () => {
 
 describe('submitSupportTicket', () => {
   beforeEach(() => {
-    mockAdd.mockReset();
+    mockFrom.mockClear();
+    mockInsert.mockClear();
+    mockSingle.mockReset();
   });
 
-  it('queues a job on the shared chatQueue with the expected shape', async () => {
-    mockAdd.mockResolvedValue({ id: 'job-42' });
+  it('inserts a ticket row with the expected shape', async () => {
+    mockSingle.mockResolvedValue({ data: { id: 'ticket-42' }, error: null });
 
     const result = await submitSupportTicket(
-      { subject: 'Login issue', message: 'Cannot log in' },
-      'user-1'
+      { subject: 'Consultation question', message: 'How do I book one?' },
+      'session-1'
     );
 
-    expect(mockAdd).toHaveBeenCalledWith(
-      'process-ai-response',
-      expect.objectContaining({
-        subject: 'Login issue',
-        message: 'Cannot log in',
-        userId: 'user-1',
-        source: 'chat-agent',
-      }),
-      expect.any(Object)
-    );
-    expect(result).toEqual({ jobId: 'job-42', status: 'queued' });
+    expect(mockFrom).toHaveBeenCalledWith('tickets');
+    expect(mockInsert).toHaveBeenCalledWith([
+      { subject: 'Consultation question', message: 'How do I book one?', session_id: 'session-1' },
+    ]);
+    expect(result).toEqual({ ticketId: 'ticket-42', status: 'open' });
   });
 
   it('returns an error when subject or message is missing', async () => {
-    const result = await submitSupportTicket({ subject: '', message: 'x' }, 'user-1');
+    const result = await submitSupportTicket({ subject: '', message: 'x' }, 'session-1');
     expect(result.error).toBeDefined();
-    expect(mockAdd).not.toHaveBeenCalled();
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it('returns an error when the insert fails', async () => {
+    mockSingle.mockResolvedValue({ data: null, error: { message: 'db down' } });
+
+    const result = await submitSupportTicket({ subject: 'x', message: 'y' }, 'session-1');
+    expect(result.error).toBeDefined();
   });
 });
 
 describe('checkTicketStatus', () => {
   beforeEach(() => {
-    mockGetJob.mockReset();
+    mockFrom.mockClear();
+    mockSingle.mockReset();
   });
 
-  it('returns not found when the job does not exist', async () => {
-    mockGetJob.mockResolvedValue(null);
-    const result = await checkTicketStatus('missing-job');
-    expect(result).toEqual({ error: 'Job not found' });
+  it('returns not found when the ticket does not exist', async () => {
+    mockSingle.mockResolvedValue({ data: null, error: { message: 'not found' } });
+    const result = await checkTicketStatus('missing-ticket');
+    expect(result).toEqual({ error: 'Ticket not found' });
   });
 
-  it('returns status and data for a completed job', async () => {
-    mockGetJob.mockResolvedValue({
-      id: 'job-42',
-      getState: jest.fn().mockResolvedValue('completed'),
-      returnvalue: 'AI drafted response',
+  it('returns status for an existing ticket', async () => {
+    mockSingle.mockResolvedValue({
+      data: { id: 'ticket-42', status: 'resolved', created_at: '2026-08-21T00:00:00Z' },
+      error: null,
     });
 
-    const result = await checkTicketStatus('job-42');
-    expect(result).toEqual({ id: 'job-42', status: 'completed', data: 'AI drafted response' });
+    const result = await checkTicketStatus('ticket-42');
+    expect(result).toEqual({ id: 'ticket-42', status: 'resolved', createdAt: '2026-08-21T00:00:00Z' });
   });
 });
 
 describe('executeAgentTool', () => {
   it('dispatches to the right function by tool name', async () => {
-    mockAdd.mockResolvedValue({ id: 'job-7' });
+    mockSingle.mockResolvedValue({ data: { id: 'ticket-7' }, error: null });
 
     const result = await executeAgentTool(
       'submit_support_ticket',
       { subject: 'Bug', message: 'Something broke' },
-      { userId: 'user-9' }
+      { sessionId: 'session-9' }
     );
 
-    expect(result).toEqual({ jobId: 'job-7', status: 'queued' });
+    expect(result).toEqual({ ticketId: 'ticket-7', status: 'open' });
   });
 
   it('returns an error for an unknown tool name', async () => {

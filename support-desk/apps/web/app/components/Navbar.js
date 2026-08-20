@@ -20,10 +20,13 @@ export default function Navbar() {
         <Link href="/todos" className="text-blue-600 hover:underline">
           To-Do
         </Link>
+        <Link href="/admin/tickets" className="text-blue-600 hover:underline">
+          Support Inbox
+        </Link>
         <Link href="/admin/users" className="text-blue-600 hover:underline">
           Admin
         </Link>
-        <Link href="/chat">Chat</Link>
+        <Link href="/chat">AI Assistant</Link>
       </div>
       <button
         onClick={handleLogout}
