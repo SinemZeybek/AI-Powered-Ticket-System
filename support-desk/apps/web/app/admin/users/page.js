@@ -33,10 +33,9 @@ export default function AdminUsersPage() {
         return
       }
 
-      // Fetch all users with todo counts in a single query (fixes N+1 problem)
       const { data: profiles, error: profilesError } = await supabase
         .from('profiles')
-        .select('id, email, role, todos(count)')
+        .select('id, email, role')
 
       if (profilesError) {
         console.error(profilesError)
@@ -45,12 +44,7 @@ export default function AdminUsersPage() {
         return
       }
 
-      const results = profiles.map((p) => ({
-        ...p,
-        todo_count: p.todos?.[0]?.count || 0,
-      }))
-
-      setUsers(results)
+      setUsers(profiles)
       setLoading(false)
     }
 
@@ -69,7 +63,6 @@ export default function AdminUsersPage() {
           <tr className="bg-gray-200">
             <th className="border p-2 text-left">User ID</th>
             <th className="border p-2 text-left">Role</th>
-            <th className="border p-2 text-center">To-Do Count</th>
           </tr>
         </thead>
         <tbody>
@@ -77,7 +70,6 @@ export default function AdminUsersPage() {
             <tr key={u.id} className="hover:bg-gray-50">
               <td className="border p-2 text-sm">{u.id}</td>
               <td className="border p-2">{u.role}</td>
-              <td className="border p-2 text-center">{u.todo_count}</td>
             </tr>
           ))}
         </tbody>

@@ -23,7 +23,7 @@ export default function LoginPage() {
     if (error) setError(error)
         else {
           setMessage('Login successful!')
-          router.push('/todos')
+          router.push('/admin/tickets')
     }
 
     setLoading(false)
