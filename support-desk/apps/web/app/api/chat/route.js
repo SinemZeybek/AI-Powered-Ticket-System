@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { getRedisClient } from '@/lib/redisClient';
 import { supabase } from '@/lib/supabaseClient';
+import { agentToolDefinitions, executeAgentTool } from '@/lib/agentTools';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -9,12 +10,7 @@ const openai = new OpenAI({
 
 const CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
 const CHAT_HISTORY_LIMIT = Number(process.env.CHAT_HISTORY_LIMIT) || 50;
-
-const KNOWLEDGE_TEXTS = [
-  "Our application is a Next.js 16 + Supabase based project that includes authentication, role-based access, and a todo feature.",
-  "Regular users can manage only their own todos. Super admins can see all users and their todo counts in an admin panel.",
-  "This chat endpoint is a simple AI helper to answer questions about the app and general topics.",
-];
+const MAX_TOOL_ITERATIONS = 4;
 
 function getChatHistoryKey(userId) {
   return `chat:messages:${userId}`;
@@ -56,17 +52,14 @@ export async function POST(request) {
       content: m.content,
     }));
 
-    const knowledgeContent = KNOWLEDGE_TEXTS.join('\n\n');
-
     const messages = [
       {
         role: 'system',
         content:
-          'You are an AI assistant inside a Next.js + Supabase todo application. Be concise and helpful.',
-      },
-      {
-        role: 'system',
-        content: `Here is some knowledge about the app:\n\n${knowledgeContent}`,
+          'You are an AI assistant inside a Next.js + Supabase todo/support application. Be concise and helpful. ' +
+          'Use the search_knowledge_base tool to answer questions about how the app works instead of guessing. ' +
+          'Use submit_support_ticket when the user describes a problem or bug. ' +
+          'Use check_ticket_status when the user asks about a ticket they already submitted and gives you a job ID.',
       },
       ...historyMessages,
       {
@@ -78,14 +71,46 @@ export async function POST(request) {
     let assistantMessage;
 
     try {
-      const completion = await openai.chat.completions.create({
-        model: CHAT_MODEL,
-        messages,
-      });
+      for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+        const completion = await openai.chat.completions.create({
+          model: CHAT_MODEL,
+          messages,
+          tools: agentToolDefinitions,
+          tool_choice: 'auto',
+        });
 
-      assistantMessage =
-        completion.choices[0]?.message?.content ||
-        "I'm having trouble generating a proper response right now.";
+        const responseMessage = completion.choices[0]?.message;
+        const toolCalls = responseMessage?.tool_calls;
+
+        if (!toolCalls || toolCalls.length === 0) {
+          assistantMessage =
+            responseMessage?.content || "I'm having trouble generating a proper response right now.";
+          break;
+        }
+
+        messages.push(responseMessage);
+
+        for (const toolCall of toolCalls) {
+          let args = {};
+          try {
+            args = JSON.parse(toolCall.function.arguments || '{}');
+          } catch {
+            args = {};
+          }
+
+          const result = await executeAgentTool(toolCall.function.name, args, { userId: user.id });
+
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(result),
+          });
+        }
+
+        if (iteration === MAX_TOOL_ITERATIONS - 1) {
+          assistantMessage = "I'm still working on that — could you try asking again in a moment?";
+        }
+      }
     } catch (err) {
       const requestId = request.headers.get("x-request-id") || "unknown";
       console.error(`[OpenAI error] id=${requestId}:`, err);

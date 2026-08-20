@@ -7,12 +7,13 @@ jest.mock('next/server', () => ({
   NextResponse: { json: jsonMock },
 }));
 
-const mockAdd = jest.fn().mockResolvedValue({
-  id: 'job-123',
+const mockSubmitSupportTicket = jest.fn().mockResolvedValue({
+  jobId: 'job-123',
+  status: 'queued',
 });
 
-jest.mock('@/lib/bullmq', () => ({
-  ticketQueue: { add: mockAdd },
+jest.mock('@/lib/agentTools', () => ({
+  submitSupportTicket: (...args) => mockSubmitSupportTicket(...args),
 }));
 
 const { POST } = require('@/app/api/tickets/route');
@@ -26,6 +27,7 @@ function mockRequest(body) {
 describe('POST /api/tickets', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockSubmitSupportTicket.mockResolvedValue({ jobId: 'job-123', status: 'queued' });
   });
 
   it('creates a ticket and returns job id', async () => {
@@ -37,13 +39,9 @@ describe('POST /api/tickets', () => {
 
     await POST(mockRequest(ticketData));
 
-    expect(mockAdd).toHaveBeenCalledWith(
-      'ai-auto-response',
-      expect.objectContaining({
-        subject: 'Login Issue',
-        message: 'Cannot log in',
-        userId: 'user-1',
-      })
+    expect(mockSubmitSupportTicket).toHaveBeenCalledWith(
+      { subject: 'Login Issue', message: 'Cannot log in' },
+      'user-1'
     );
     expect(jsonMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -53,8 +51,19 @@ describe('POST /api/tickets', () => {
     );
   });
 
+  it('returns 400 when the ticket tool reports a validation error', async () => {
+    mockSubmitSupportTicket.mockResolvedValueOnce({ error: 'Both subject and message are required to submit a ticket.' });
+
+    await POST(mockRequest({ subject: '', message: '', userId: '1' }));
+
+    expect(jsonMock).toHaveBeenCalledWith(
+      { error: 'Both subject and message are required to submit a ticket.' },
+      { status: 400 }
+    );
+  });
+
   it('returns 500 when queue fails', async () => {
-    mockAdd.mockRejectedValueOnce(new Error('Redis down'));
+    mockSubmitSupportTicket.mockRejectedValueOnce(new Error('Redis down'));
 
     await POST(mockRequest({ subject: 'Test', message: 'Test', userId: '1' }));
 

@@ -49,17 +49,26 @@ jest.mock("@/lib/supabaseClient", () => ({
 }));
 
 // Mock OpenAI SDK
+const createMock = jest.fn().mockResolvedValue({
+  choices: [{ message: { content: "Mock AI reply" } }],
+});
+
 jest.mock("openai", () => {
   return jest.fn().mockImplementation(() => ({
     chat: {
       completions: {
-        create: jest.fn().mockResolvedValue({
-          choices: [{ message: { content: "Mock AI reply" } }],
-        }),
+        create: (...args) => createMock(...args),
       },
     },
   }));
 });
+
+// Mock the agent tools module
+const executeAgentToolMock = jest.fn();
+jest.mock("@/lib/agentTools", () => ({
+  agentToolDefinitions: [{ type: "function", function: { name: "search_knowledge_base" } }],
+  executeAgentTool: (...args) => executeAgentToolMock(...args),
+}));
 
 // Import the handler AFTER all mocks are defined
 const { POST } = require("@/app/api/chat/route");
@@ -78,6 +87,11 @@ describe("POST /api/chat", () => {
     mockRedisClient.lRange.mockClear();
     mockRedisClient.rPush.mockClear();
     mockRedisClient.lTrim.mockClear();
+    executeAgentToolMock.mockClear();
+    createMock.mockClear();
+    createMock.mockResolvedValue({
+      choices: [{ message: { content: "Mock AI reply" } }],
+    });
   });
 
   it("returns assistant reply when a valid message is sent", async () => {
@@ -121,5 +135,70 @@ describe("POST /api/chat", () => {
     const res = await POST(req);
 
     expect(res.status).toBe(401);
+  });
+
+  it("executes a tool call and feeds the result back before returning a final reply", async () => {
+    executeAgentToolMock.mockResolvedValueOnce({ results: ["Roles: user and super_admin."] });
+
+    createMock
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                {
+                  id: "call-1",
+                  function: { name: "search_knowledge_base", arguments: JSON.stringify({ query: "roles" }) },
+                },
+              ],
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: "There are two roles: user and super_admin." } }],
+      });
+
+    const req = mockRequest({ message: "What roles exist?" });
+    const res = await POST(req);
+    const json = await res.json();
+
+    expect(executeAgentToolMock).toHaveBeenCalledWith(
+      "search_knowledge_base",
+      { query: "roles" },
+      { userId: "test-user-123" }
+    );
+    expect(createMock).toHaveBeenCalledTimes(2);
+    expect(json.reply).toBe("There are two roles: user and super_admin.");
+  });
+
+  it("falls back to a generic reply if tool calls never resolve within the iteration cap", async () => {
+    executeAgentToolMock.mockResolvedValue({ results: ["some result"] });
+
+    createMock.mockResolvedValue({
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call-loop",
+                function: { name: "search_knowledge_base", arguments: JSON.stringify({ query: "x" }) },
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    const req = mockRequest({ message: "Keep looping" });
+    const res = await POST(req);
+    const json = await res.json();
+
+    expect(json.reply).toMatch(/still working on that/i);
+    expect(createMock.mock.calls.length).toBeLessThanOrEqual(4);
   });
 });
