@@ -1,32 +1,25 @@
 'use client'
-import { supabase } from '../lib/supabaseClient'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
 export default function HomePage() {
-  const router = useRouter()
-
-  async function handleLogout() {
-    await supabase.auth.signOut()
-    router.push('/login')
-  }
-
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen gap-6">
-      <nav className="flex gap-4 text-blue-600 underline">
-        <Link href="/todos">My To-Do List</Link>
-        <Link href="/admin/users">Admin</Link>
-      </nav>
+    <div className="flex flex-col items-center justify-center min-h-screen gap-6 text-center px-6">
+      <h1 className="text-3xl font-bold">Zeybek Hukuk Bürosu</h1>
+      <p className="text-gray-600 max-w-md">
+        Ask our AI assistant about practice areas, office hours, or how to book a consultation —
+        it&apos;ll answer directly or pass your question to a member of the team.
+      </p>
 
-      <h1 className="text-3xl font-bold">Welcome! 🎉</h1>
-      <p className="text-gray-600">You are logged in to your account.</p>
-
-      <button
-        onClick={handleLogout}
-        className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
+      <Link
+        href="/chat"
+        className="bg-blue-600 text-white px-6 py-3 rounded hover:bg-blue-700"
       >
-        Log Out
-      </button>
+        Ask a question
+      </Link>
+
+      <Link href="/login" className="text-sm text-gray-500 hover:underline">
+        Staff login
+      </Link>
     </div>
   )
 }

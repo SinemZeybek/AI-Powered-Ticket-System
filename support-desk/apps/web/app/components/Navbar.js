@@ -17,9 +17,6 @@ export default function Navbar() {
         <Link href="/" className="text-blue-600 hover:underline">
           Home
         </Link>
-        <Link href="/todos" className="text-blue-600 hover:underline">
-          To-Do
-        </Link>
         <Link href="/admin/tickets" className="text-blue-600 hover:underline">
           Support Inbox
         </Link>
