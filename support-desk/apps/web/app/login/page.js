@@ -3,8 +3,8 @@ import { useState } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import Loading from '@/components/Loading'
-import ErrorMessage from '@/components/ErrorMessage'
+import Loading from '@/app/components/Loading'
+import ErrorMessage from '@/app/components/ErrorMessage'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')

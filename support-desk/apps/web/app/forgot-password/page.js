@@ -2,8 +2,8 @@
 import { useState } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import Link from 'next/link'
-import Loading from '@/components/Loading'
-import ErrorMessage from '@/components/ErrorMessage'
+import Loading from '@/app/components/Loading'
+import ErrorMessage from '@/app/components/ErrorMessage'
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
