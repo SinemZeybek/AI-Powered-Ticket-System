@@ -3,11 +3,15 @@ import OpenAI from 'openai';
 import { getRedisClient } from '@/lib/redisClient';
 import { agentToolDefinitions, executeAgentTool } from '@/lib/agentTools';
 
+// Groq's API is OpenAI-compatible, so the OpenAI SDK works unchanged
+// against it — just a different base URL, key, and model. Using Groq's
+// free tier here instead of a paid OpenAI key.
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.GROQ_API_KEY,
+  baseURL: 'https://api.groq.com/openai/v1',
 });
 
-const CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4o-mini';
+const CHAT_MODEL = process.env.CHAT_MODEL || 'openai/gpt-oss-120b';
 const CHAT_HISTORY_LIMIT = Number(process.env.CHAT_HISTORY_LIMIT) || 50;
 const MAX_TOOL_ITERATIONS = 4;
 const RATE_LIMIT_MAX = 15;

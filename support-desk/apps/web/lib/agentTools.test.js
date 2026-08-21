@@ -25,6 +25,12 @@ describe('searchKnowledgeBase', () => {
     expect(results[0].toLowerCase()).toContain('hukuku');
   });
 
+  it('matches on individual keywords, not the whole phrase verbatim', () => {
+    const { results } = searchKnowledgeBase('office phone');
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].toLowerCase()).toContain('phone');
+  });
+
   it('returns a fallback message when nothing matches', () => {
     const { results } = searchKnowledgeBase('quantum physics');
     expect(results).toEqual(['No matching knowledge base entry found.']);

@@ -33,9 +33,18 @@ export const KNOWLEDGE_BASE = [
 
 export function searchKnowledgeBase(query) {
   const q = String(query || '').toLowerCase();
-  const matches = KNOWLEDGE_BASE.filter(
-    (entry) => entry.topic.toLowerCase().includes(q) || entry.text.toLowerCase().includes(q)
-  );
+  // Match on individual keywords, not the whole query as one literal
+  // substring — "office phone" should still match an entry containing
+  // "phone" even though it doesn't contain "office phone" verbatim.
+  const keywords = q.split(/\s+/).filter((word) => word.length > 2);
+
+  const matches = KNOWLEDGE_BASE.filter((entry) => {
+    const haystack = `${entry.topic} ${entry.text}`.toLowerCase();
+    return keywords.length > 0
+      ? keywords.some((word) => haystack.includes(word))
+      : haystack.includes(q);
+  });
+
   return {
     results: matches.length > 0 ? matches.map((m) => m.text) : ['No matching knowledge base entry found.'],
   };
@@ -53,6 +62,7 @@ export async function submitSupportTicket({ subject, message }, sessionId) {
     .single();
 
   if (error) {
+    console.error('[submitSupportTicket] Supabase insert error:', error);
     return { error: 'Could not submit the ticket right now. Please try again.' };
   }
 
